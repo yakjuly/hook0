@@ -52,13 +52,19 @@ services:
       - CORS_ALLOWED_ORIGINS=http://localhost:8001
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/hook0
       - SMTP_CONNECTION_URL=smtp://mailpit:1025
-      - EMAIL_SENDER_ADDRESS=sender@hook0.local
+      - EMAIL_SENDER_NAME=Priceline
+      - EMAIL_SENDER_ADDRESS=sender@getaroom.local
       - APP_URL=http://localhost:8001
+      - OTLP_TRACES_ENDPOINT=http://jaeger:4318/v1/traces
+      - MASTER_API_KEY=414559eb-4c27-4ba8-9663-f63033bdf440
       - BISCUIT_PRIVATE_KEY=bbea79cd66926b219b3219a3186decb36136d774dd7c35a8239e512090fa8854  # DO NOT USE THIS KEY IN PRODUCTION
+      - DISABLE_REGISTRATION=true
+      - SUPPORT_EMAIL_ADDRESS=support@priceline.com
     ports:
       - "8081:8081"
     networks:
       - hook0
+      - observability
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --user-agent 'docker-compose-healthcheck' http://localhost:$${PORT}/api/v1/swagger.json || exit 1"]
@@ -78,6 +84,7 @@ services:
       - "8001:80"
     networks:
       - hook0
+      - observability
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl --fail --user-agent 'docker-compose-healthcheck' http://localhost || exit 1"]
@@ -95,8 +102,12 @@ services:
       - DATABASE_URL=postgres://postgres:postgres@postgres:5432/hook0
       - WORKER_NAME=default
       - DISABLE_TARGET_IP_CHECK=true
+      - MAX_FAST_RETRIES=5
+      - MAX_SLOW_RETRIES=5
+      - OTLP_TRACES_ENDPOINT=http://jaeger:4318/v1/traces
     networks:
       - hook0
+      - observability
     restart: unless-stopped
     depends_on:
       postgres:
@@ -107,3 +118,5 @@ services:
 networks:
   hook0:
     driver: bridge
+  observability:
+    external: true
