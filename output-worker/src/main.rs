@@ -8,6 +8,7 @@ use ::pulsar::{Authentication, Pulsar, TokioExecutor};
 use anyhow::bail;
 use aws_sdk_s3::Client;
 use aws_sdk_s3::config::retry::RetryConfig;
+use aws_sdk_s3::config::timeout::TimeoutConfig;
 use aws_sdk_s3::config::{AppName, Credentials, Region};
 use chrono::{DateTime, Utc};
 use clap::{ArgGroup, Parser, ValueEnum, crate_name, crate_version};
@@ -107,6 +108,22 @@ struct Config {
     #[clap(long, env, default_value_t = 3)]
     object_storage_max_attempts: u32,
 
+    /// [Object Storage] Connect timeout for object storage operations (time to initiate socket connection)
+    #[clap(long, env, value_parser = humantime::parse_duration, default_value = "3s")]
+    object_storage_connect_timeout: Duration,
+
+    /// [Object Storage] Read timeout for object storage operations (time to first byte)
+    #[clap(long, env, value_parser = humantime::parse_duration, default_value = "5s")]
+    object_storage_read_timeout: Duration,
+
+    /// [Object Storage] Operation attempt timeout for object storage operations
+    #[clap(long, env, value_parser = humantime::parse_duration, default_value = "10s")]
+    object_storage_operation_attempt_timeout: Duration,
+
+    /// [Object Storage] Operation timeout for object storage operations
+    #[clap(long, env, value_parser = humantime::parse_duration, default_value = "30s")]
+    object_storage_operation_timeout: Duration,
+
     /// Bucket name of the S3-like object storage
     #[clap(long, env)]
     object_storage_bucket_name: Option<String>,
@@ -174,6 +191,10 @@ struct Config {
     /// Grace period to wait for database commit before dropping unfound request attempts (only for Pulsar workers)
     #[clap(long, env, value_parser = humantime::parse_duration, default_value = "5s")]
     request_attempt_db_commit_grace_period: Duration,
+
+    /// Period of Pulsar consumer stats collection (only for Pulsar workers)
+    #[clap(long, env, value_parser = humantime::parse_duration, default_value = "15s")]
+    pulsar_consumer_stats_interval: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -374,6 +395,7 @@ async fn main() -> anyhow::Result<()> {
         );
         let region = Region::from_static("none");
         let s3_config = aws_sdk_s3::Config::builder()
+            .behavior_version_latest()
             .region(region)
             .credentials_provider(credentials)
             .app_name(app_name)
@@ -387,6 +409,14 @@ async fn main() -> anyhow::Result<()> {
                 object_storage_host
             ))
             .force_path_style(true)
+            .timeout_config(
+                TimeoutConfig::builder()
+                    .connect_timeout(config.object_storage_connect_timeout)
+                    .read_timeout(config.object_storage_read_timeout)
+                    .operation_attempt_timeout(config.object_storage_operation_attempt_timeout)
+                    .operation_timeout(config.object_storage_operation_timeout)
+                    .build(),
+            )
             .retry_config(
                 RetryConfig::standard()
                     .with_max_attempts(config.object_storage_max_attempts)

@@ -5,19 +5,24 @@ use futures::TryStreamExt;
 use log::{debug, error, info, trace, warn};
 use pulsar::consumer::{InitialPosition, Message};
 use pulsar::proto::MessageIdData;
-use pulsar::{Consumer, ConsumerOptions, DeserializeMessage, Executor, ProducerOptions, SubType};
+use pulsar::{
+    Consumer, ConsumerOptions, DeserializeMessage, Executor, Producer, ProducerOptions, SubType,
+    TokioExecutor,
+};
 use sqlx::{PgPool, query, query_as};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::mpsc::{Sender, channel};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use tokio::time::sleep;
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+use tokio::time::{Instant, interval_at, sleep};
 use tokio::{select, spawn};
 use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
-use crate::opentelemetry::{end_request_attempt_span, start_request_attempt_span};
+use crate::opentelemetry::{
+    end_request_attempt_span, gather_pulsar_consumer_metrics, start_request_attempt_span,
+};
 use crate::work::work;
 use crate::{
     Config, ObjectStorageConfig, PulsarConfig, RequestAttempt, RequestAttemptWithOptionalPayload,
@@ -198,6 +203,24 @@ pub async fn look_for_work(
         .build::<RequestAttempt>()
         .await?;
 
+    // Create a single producer for retry messages, shared across all tasks
+    let retry_producer = Arc::new(Mutex::new(
+        pulsar
+            .pulsar
+            .producer()
+            .with_topic(&topic)
+            .with_name(format!(
+                "hook0-output-worker.{worker_id}.request-attempt-retry.{}",
+                Uuid::now_v7()
+            ))
+            .with_options(ProducerOptions {
+                block_queue_if_full: true,
+                ..Default::default()
+            })
+            .build()
+            .await?,
+    ));
+
     // This semaphore is what limits the number of inflight webhooks
     let semaphore = Arc::new(Semaphore::new(config.concurrent.into()));
 
@@ -219,6 +242,11 @@ pub async fn look_for_work(
             }
         });
     }
+
+    let mut stats_interval = interval_at(
+        Instant::now() + config.pulsar_consumer_stats_interval,
+        config.pulsar_consumer_stats_interval,
+    );
 
     loop {
         // We prepare a future to acquire a permit from the semaphore and then get a message from the Pulsar consumer
@@ -251,6 +279,18 @@ pub async fn look_for_work(
                     ack_message(&mut consumer, &topic, &heartbeat_tx, msg_ack).await?;
                 }
             },
+            _ = stats_interval.tick() => {
+                // Note: get_stats() blocks the select loop, but it's a lightweight
+                // binary protocol call over the existing connection.
+                match consumer.get_stats().await {
+                    Ok(stats) => {
+                        gather_pulsar_consumer_metrics(&stats);
+                    }
+                    Err(e) => {
+                        warn!("Could not get Pulsar consumer stats: {e}");
+                    }
+                }
+            },
             Ok((permit, msg_opt)) = next_msg, if !task_tracker.is_closed() => {
                 if let Some(msg) = msg_opt {
                     let ack_tx_for_error = ack_tx.clone();
@@ -260,11 +300,9 @@ pub async fn look_for_work(
                     let c = config.clone();
                     let po = pool.clone();
                     let os = object_storage.clone();
-                    let wid = worker_id.clone();
                     let wn = worker_name.clone();
                     let wv = worker_version.clone();
-                    let pu = pulsar.clone();
-                    let t = topic.clone();
+                    let rp = retry_producer.clone();
 
                     // We handle the request attempt in a new Tokio task
                     task_tracker.spawn(async move {
@@ -272,11 +310,9 @@ pub async fn look_for_work(
                             &c,
                             &po,
                             &os,
-                            &wid,
                             &wn,
                             &wv,
-                            pu.as_ref(),
-                            &t,
+                            &rp,
                             msg,
                             permit,
                             ack_tx,
@@ -314,11 +350,9 @@ async fn handle_message(
     config: &Config,
     pool: &PgPool,
     object_storage: &Arc<Option<ObjectStorageConfig>>,
-    worker_id: &Uuid,
     worker_name: &str,
     worker_version: &str,
-    pulsar: &PulsarConfig,
-    topic: &str,
+    retry_producer: &Mutex<Producer<TokioExecutor>>,
     msg: Message<RequestAttempt>,
     permit: OwnedSemaphorePermit,
     ack_tx: Sender<AckMessage>,
@@ -548,20 +582,9 @@ async fn handle_message(
                                 &retry_in.as_secs(),
                             );
 
-                            pulsar
-                                .pulsar
-                                .producer()
-                                .with_topic(topic)
-                                .with_name(format!(
-                                    "hook0-output-worker.{worker_id}.request-attempt-retry.{}",
-                                    Uuid::now_v7()
-                                ))
-                                .with_options(ProducerOptions {
-                                    block_queue_if_full: true,
-                                    ..Default::default()
-                                })
-                                .build()
-                                .await?
+                            retry_producer
+                                .lock()
+                                .await
                                 .create_message()
                                 .event_time(retry.created_at.timestamp_micros() as u64)
                                 .deliver_at(delay_until.into())?
