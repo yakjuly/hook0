@@ -47,6 +47,7 @@ export const routes: Record<Hook0Routes, string> = {
 
   WebhooksList: 'WebhooksList',
   LogsList: 'LogsList',
+  LogsDetail: 'LogsDetail',
   APIDocumentation: 'APIDocumentation',
   APIDocumentationForApplication: 'APIDocumentationForApplication',
   Error404: '404',
@@ -247,6 +248,11 @@ export default [
     name: routes.LogsList,
     path: '/organizations/:organization_id/applications/:application_id/logs',
     component: () => import('@/pages/organizations/applications/logs/LogList.vue'),
+  },
+  {
+    name: routes.LogsDetail,
+    path: '/organizations/:organization_id/applications/:application_id/logs/:response_id',
+    component: () => import('@/pages/organizations/applications/logs/LogDetail.vue'),
   },
 
   {

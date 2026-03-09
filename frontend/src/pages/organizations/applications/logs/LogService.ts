@@ -6,6 +6,7 @@ import type { components } from '@/types';
 type definitions = components['schemas'];
 
 export type RequestAttempt = definitions['RequestAttempt'];
+export type Response = definitions['Response'];
 
 export const enum RequestAttemptStatusType {
   Waiting = 'waiting',
@@ -33,6 +34,19 @@ export function list(application_id: UUID): Promise<Array<RequestAttemptTypeFixe
     })
     .then(
       (res: AxiosResponse<Array<RequestAttemptTypeFixed>>) => res.data,
+      (err: AxiosError<AxiosResponse<Problem>>) => Promise.reject(handleError(err))
+    );
+}
+
+export function getResponse(response_id: UUID, application_id: UUID): Promise<Response> {
+  return http
+    .get(`/responses/${response_id}`, {
+      params: {
+        application_id: application_id,
+      },
+    })
+    .then(
+      (res: AxiosResponse<Response>) => res.data,
       (err: AxiosError<AxiosResponse<Problem>>) => Promise.reject(handleError(err))
     );
 }

@@ -149,6 +149,34 @@ const columnDefs: ColDef[] = [
       defaultText: 'pending…',
     },
   },
+  {
+    field: 'response_id',
+    suppressMovable: true,
+    suppressSizeToFit: true,
+    width: 100,
+    sortable: false,
+    resizable: false,
+    headerName: 'Response',
+    cellRenderer: Hook0TableCellLink,
+    cellRendererParams: {
+      value(row: RequestAttemptTypeFixed) {
+        return row.response_id ? 'View' : '';
+      },
+      to(row: RequestAttemptTypeFixed) {
+        if (!row.response_id) {
+          return null;
+        }
+        return {
+          name: routes.LogsDetail,
+          params: {
+            application_id: route.params.application_id,
+            organization_id: route.params.organization_id,
+            response_id: row.response_id,
+          },
+        };
+      },
+    },
+  },
 ];
 
 const request_attempts$ = ref<Promise<Array<RequestAttemptTypeFixed>>>();
