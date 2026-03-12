@@ -251,7 +251,7 @@ export default [
   },
   {
     name: routes.LogsDetail,
-    path: '/organizations/:organization_id/applications/:application_id/logs/:response_id',
+    path: '/organizations/:organization_id/applications/:application_id/events/:event_id/logs/:response_id',
     component: () => import('@/pages/organizations/applications/logs/LogDetail.vue'),
   },
 

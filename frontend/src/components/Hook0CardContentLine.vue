@@ -29,7 +29,7 @@ defineSlots<{
 
 <style lang="scss" scoped>
 .hook0-card-content-line {
-  @apply py-4 sm:py-5 sm:px-6;
+  @apply py-2 sm:py-2 sm:px-6;
 
   &.stacked {
     @apply grid-rows-2;
@@ -58,6 +58,6 @@ defineSlots<{
 }
 
 .hook0-card-content-line-content {
-  @apply mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2;
+  @apply mt-1 text-sm text-gray-900 sm:mt-0 sm:col-span-2 break-words;
 }
 </style>

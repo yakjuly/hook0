@@ -55,10 +55,10 @@ services:
       - EMAIL_SENDER_NAME=Priceline
       - EMAIL_SENDER_ADDRESS=sender@getaroom.local
       - APP_URL=http://localhost:8001
-      - OTLP_TRACES_ENDPOINT=http://jaeger:4318/v1/traces
+      # - OTLP_TRACES_ENDPOINT=http://jaeger:4318/v1/traces
       - MASTER_API_KEY=414559eb-4c27-4ba8-9663-f63033bdf440
       - BISCUIT_PRIVATE_KEY=bbea79cd66926b219b3219a3186decb36136d774dd7c35a8239e512090fa8854  # DO NOT USE THIS KEY IN PRODUCTION
-      - DISABLE_REGISTRATION=true
+      - DISABLE_REGISTRATION=false
       - SUPPORT_EMAIL_ADDRESS=support@priceline.com
     ports:
       - "8081:8081"
@@ -106,7 +106,7 @@ services:
       - DISABLE_TARGET_IP_CHECK=true
       - MAX_FAST_RETRIES=5
       - MAX_SLOW_RETRIES=5
-      - OTLP_TRACES_ENDPOINT=http://jaeger:4318/v1/traces
+      # - OTLP_TRACES_ENDPOINT=http://jaeger:4318/v1/traces
     networks:
       - hook0
       - observability

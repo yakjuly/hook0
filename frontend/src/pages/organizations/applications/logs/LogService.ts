@@ -38,6 +38,23 @@ export function list(application_id: UUID): Promise<Array<RequestAttemptTypeFixe
     );
 }
 
+export function listByEventId(
+  application_id: UUID,
+  event_id: UUID
+): Promise<Array<RequestAttemptTypeFixed>> {
+  return http
+    .get('/request_attempts', {
+      params: {
+        application_id,
+        event_id,
+      },
+    })
+    .then(
+      (res: AxiosResponse<Array<RequestAttemptTypeFixed>>) => res.data,
+      (err: AxiosError<AxiosResponse<Problem>>) => Promise.reject(handleError(err))
+    );
+}
+
 export function getResponse(response_id: UUID, application_id: UUID): Promise<Response> {
   return http
     .get(`/responses/${response_id}`, {
