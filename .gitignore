@@ -29,3 +29,12 @@ CLAUDE.local.md
 .agents
 .gemini
 .opencode
+tests-e2e/playwright-report
+tests-e2e/test-results
+.worktrees
+frontend/docs/
+reviews/
+dogfood-output/
+human-ui-tests/
+docs/plans/
+.DS_Store

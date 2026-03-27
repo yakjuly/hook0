@@ -41,6 +41,7 @@ mod object_storage_cleanup;
 mod old_events_cleanup;
 mod onboarding;
 mod openapi;
+mod openapi_postprocess;
 mod opentelemetry;
 mod pagination;
 mod problems;
@@ -1093,8 +1094,9 @@ async fn main() -> anyhow::Result<()> {
         let webapp_path = config.webapp_path.clone();
         let app_url = config.app_url;
         HttpServer::new(move || {
-            // Compute default OpenAPI spec
-            let spec = openapi::default_spec(&app_url);
+            // Compute default OpenAPI spec and apply post-processing
+            let mut spec = openapi::default_spec(&app_url);
+            openapi_postprocess::enrich_openapi_spec(&mut spec);
 
             // Prepare user IP extraction middleware
             let get_user_ip = middleware_get_user_ip::GetUserIp {
@@ -1377,12 +1379,26 @@ async fn main() -> anyhow::Result<()> {
                         )
                         .service(
                             web::scope("/event")
-                                .wrap(Compat::new(rate_limiters.token()))
                                 .wrap(Compat::new(rate_limiters.token())) // Middleware order is counter intuitive: this is executed second
                                 .wrap(biscuit_auth.clone()) // Middleware order is counter intuitive: this is executed first/ Middleware order is counter intuitive: this is executed first
                                 .service(
                                     web::resource("")
                                         .route(web::post().to(handlers::events::ingest)),
+                                ),
+                        )
+                        .service(
+                            web::scope("/events_per_day")
+                                .wrap(Compat::new(rate_limiters.token())) // Middleware order is counter intuitive: this is executed second
+                                .wrap(biscuit_auth.clone()) // Middleware order is counter intuitive: this is executed first
+                                .service(
+                                    web::resource("/application").route(
+                                        web::get().to(handlers::events_per_day::application),
+                                    ),
+                                )
+                                .service(
+                                    web::resource("/organization").route(
+                                        web::get().to(handlers::events_per_day::organization),
+                                    ),
                                 ),
                         )
                         .service(
