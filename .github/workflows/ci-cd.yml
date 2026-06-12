@@ -1,0 +1,186 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+env:
+  RUST_VERSION: "1.94"
+  NODE_VERSION: "24"
+  PG_VERSION: "18"
+  PROTOC_VERSION: "33.5"
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # CI — Rust checks (api + output-worker)
+  # ---------------------------------------------------------------------------
+  rust-check:
+    name: Rust CI
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: hook0
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hook0"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      SQLX_OFFLINE: "true"
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/hook0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: clippy, rustfmt
+
+      - name: Cache Cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: rust-${{ runner.os }}-
+
+      - name: Install protoc
+        run: |
+          wget -qO protoc.zip "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          sudo unzip -o protoc.zip -d /usr/local
+          rm protoc.zip
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (all targets)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace
+
+  # ---------------------------------------------------------------------------
+  # CI — Frontend checks
+  # ---------------------------------------------------------------------------
+  frontend-check:
+    name: Frontend CI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test:ci
+
+  # ---------------------------------------------------------------------------
+  # CD — Build & deploy to sandbox (requires environment approval)
+  # ---------------------------------------------------------------------------
+  deploy-sandbox:
+    name: Deploy to Sandbox
+    needs: [rust-check, frontend-check]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    environment: sandbox
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        run: |
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "sha_short=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+          echo "timestamp=$(date -u +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: api/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/hook0-api:sandbox
+            ${{ env.IMAGE_PREFIX }}/hook0-api:sha-${{ steps.meta.outputs.sha_short }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & push Output Worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: output-worker/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/hook0-output-worker:sandbox
+            ${{ env.IMAGE_PREFIX }}/hook0-output-worker:sha-${{ steps.meta.outputs.sha_short }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & push Frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/hook0-frontend:sandbox
+            ${{ env.IMAGE_PREFIX }}/hook0-frontend:sha-${{ steps.meta.outputs.sha_short }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Deploy summary
+        run: |
+          echo "## Sandbox Deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image | Tag |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-----|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| hook0-api | \`sha-${{ steps.meta.outputs.sha_short }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| hook0-output-worker | \`sha-${{ steps.meta.outputs.sha_short }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| hook0-frontend | \`sha-${{ steps.meta.outputs.sha_short }}\` |" >> "$GITHUB_STEP_SUMMARY"
